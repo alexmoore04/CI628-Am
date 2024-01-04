@@ -1,4 +1,9 @@
 #include "SDL_net.h"
+#include "SDL_image.h"
+#include "SDL_ttf.h"
+#include <string>
+#include <vector>
+#include <sstream>
 
 #include "MyGame.h"
 
@@ -24,32 +29,87 @@ static int on_receive(void* socket_ptr) {
         received = SDLNet_TCP_Recv(socket, message, message_length);
         message[received] = '\0';
 
-        char* pch = strtok(message, ",");
+        std::cout << message << "\n";
 
-        // get the command, which is the first string in the message
-        string cmd(pch);
+        stringstream test(message);
+        string segment;
+        vector<string> seglist;
 
-        // then get the arguments to the command
-        vector<string> args;
-
-        while (pch != NULL) {
-            pch = strtok(NULL, ",");
-
-            if (pch != NULL) {
-                args.push_back(string(pch));
-            }
+        while (getline(test, segment, '|'))
+        {
+            seglist.push_back(segment);
         }
 
-        game->on_receive(cmd, args);
+        //cout << "seglist length " << seglist.size() << "\n";
+        //cout << "seglist " << seglist[0] << "\n";
 
-        if (cmd == "exit") {
-            break;
+        if (seglist.size() > 1) {
+            // get the command, which is the first string in the message
+            for (int i = 0; i < seglist.size(); i++)
+            {
+                int len = seglist[i].length();
+
+                //cout << "seglist length " << seglist[i].length() << "\n";
+
+                char* nChar = new char[len + 1];
+                strcpy(nChar, seglist[i].c_str());
+                char* pch = strtok(nChar, ",");
+
+                //cout << "nChar " << nChar << "\n";
+
+                string cmd(pch);
+
+                // then get the arguments to the command
+                vector<string> args;
+
+                while (pch != NULL) {
+                    pch = strtok(NULL, ",");
+
+
+                    if (pch != NULL) {
+                        args.push_back(string(pch));
+                    }
+                }
+
+                delete[] nChar;
+
+                game->on_receive(cmd, args);
+
+                if (cmd == "exit") {
+                    break;
+                }
+
+            }
+        }
+        else 
+        {
+            char* pch = strtok(message, ",");
+            string cmd(pch);
+
+            // then get the arguments to the command
+            vector<string> args;
+
+            while (pch != NULL) {
+                pch = strtok(NULL, ",");
+
+
+                if (pch != NULL) {
+                    args.push_back(string(pch));
+                }
+            }
+
+            game->on_receive(cmd, args);
+
+            if (cmd == "exit") {
+                break;
+            }
         }
 
     } while (received > 0 && is_running);
 
     return 0;
 }
+
 
 static int on_send(void* socket_ptr) {
     TCPsocket socket = (TCPsocket)socket_ptr;
@@ -68,9 +128,10 @@ static int on_send(void* socket_ptr) {
 
             SDLNet_TCP_Send(socket, message.c_str(), message.length());
         }
-
+        
         SDL_Delay(1);
     }
+    SDLNet_TCP_Send(socket, "player disconnected", 19);
 
     return 0;
 }
@@ -85,7 +146,7 @@ void loop(SDL_Renderer* renderer) {
                 game->input(event);
 
                 switch (event.key.keysym.sym) {
-                    case SDLK_ESCAPE:
+                    case SDLK_ESCAPE:               
                         is_running = false;
                         break;
 
@@ -102,9 +163,15 @@ void loop(SDL_Renderer* renderer) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
+        game->sfx();
+
         game->update();
 
         game->render(renderer);
+
+        game->frames();
+
+        game->fixed_update();
 
         SDL_RenderPresent(renderer);
 
@@ -114,7 +181,7 @@ void loop(SDL_Renderer* renderer) {
 
 int run_game() {
     SDL_Window* window = SDL_CreateWindow(
-        "Multiplayer Pong Client",
+        "Multiplayer Fighting Game Client",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         800, 600,
         SDL_WINDOW_SHOWN
@@ -131,6 +198,10 @@ int run_game() {
         std::cout << "Failed to create renderer" << SDL_GetError() << std::endl;
         return -1;
     }
+
+    game->Init(renderer);
+
+    game->loadAudio();
 
     loop(renderer);
 
@@ -151,6 +222,34 @@ int main(int argc, char** argv) {
         exit(2);
     }
 
+    //initialise audio
+    if (SDL_INIT_AUDIO == -1) {
+        printf("SDL_INIT_AUDIO: %s\n", SDL_GetError());
+        exit(3);
+    }
+
+    //initialize SDL_mixer
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 4, 2048) == -1)
+    {
+        printf("SDL_mixer: %s\n", Mix_GetError());
+        exit(4);
+    }
+
+
+    //initialise images
+    if (SDL_Init(IMG_INIT_PNG) == -1) {
+        printf("SDL_Init(IMG_INIT_PNG): %s\n", SDLNet_GetError());
+        exit(5);
+    }
+
+    //initialise text 
+    if (TTF_Init() == -1) {
+        printf("TTF_Init(): %s\n", SDLNet_GetError());
+        exit(6);
+    }
+
+
+
     IPaddress ip;
 
     // Resolve host (ip name + port) into an IPaddress type
@@ -167,6 +266,8 @@ int main(int argc, char** argv) {
         exit(4);
     }
 
+
+
     SDL_CreateThread(on_receive, "ConnectionReceiveThread", (void*)socket);
     SDL_CreateThread(on_send, "ConnectionSendThread", (void*)socket);
 
@@ -179,6 +280,9 @@ int main(int argc, char** argv) {
 
     // Shutdown SDL_net
     SDLNet_Quit();
+
+    // Shutdown Mixer
+    Mix_Quit();
 
     // Shutdown SDL
     SDL_Quit();
